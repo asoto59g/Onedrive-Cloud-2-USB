@@ -1,4 +1,5 @@
 # Análisis y Documentación: `1drivecloud2usb.py`
+🏢 SCRIPT ENTERPRISE V2 COMPLETO
 
 Este documento describe el funcionamiento, requisitos y uso del script `1drivecloud2usb.py`, diseñado para automatizar el respaldo de archivos desde la nube (OneDrive) hacia un dispositivo USB local.
 
