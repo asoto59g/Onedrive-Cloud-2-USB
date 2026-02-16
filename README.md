@@ -11,7 +11,7 @@ El objetivo principal es proporcionar un sistema de respaldo automático y resil
 - **Sincronización Inteligente**:
     - **Días de semana (Lunes a Sábado)**: Realiza una **copia incremental** (`copy`), agregando archivos nuevos o modificados sin borrar nada en el destino.
     - **Domingos**: Realiza una **sincronización completa** (`sync`), lo que significa que los archivos eliminados en la nube también se eliminarán en el USB para mantener una copia idéntica.
-- **Optimización para FAT32**: Limita el tamaño máximo de archivo a 4GB para asegurar compatibilidad con sistemas de archivos antiguos.
+- **Optimización para NTFS**: No hay limite de tamaño máximo de archivo a 4GB para asegurar compatibilidad con sistemas de archivos actuales.
 - **Resiliencia**: Configurado con múltiples reintentos y tiempos de espera extendidos para manejar conexiones de red inestables.
 
 ## 2. Requerimientos y Dependencias
