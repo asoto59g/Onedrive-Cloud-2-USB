@@ -1,0 +1,8 @@
+{
+    "remote": "onedrive:/Documentos",
+    "usb_label": "ESD-USB",
+    "usb_folder": "OneDriveBackup",
+    "check_interval": 600,
+    "transfers": 6,
+    "checkers": 12
+}

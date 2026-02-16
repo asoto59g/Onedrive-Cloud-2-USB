@@ -1,0 +1,3 @@
+AppData/**
+Microsoft Edge Collections/**
+Archivos de chat de Microsoft Copilot/**
