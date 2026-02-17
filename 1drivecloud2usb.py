@@ -2,44 +2,30 @@ import subprocess
 import json
 import time
 import os
-import shutil
+import sys
+import threading
+import queue
 from datetime import datetime
 import win32api
-import win32file
-import sys
 
 CONFIG_FILE = "config.json"
-LOG_DIR = "logs"
-LOCK_FILE = "backup.lock"
+LOG_FILE = "logs/backup.log"
 
-os.makedirs(LOG_DIR, exist_ok=True)
+STATS_INTERVAL_SEC = 5
+ZERO_SPEED_LIMIT = 4
+INACTIVITY_LIMIT = 120
 
 
 # =============================
-# LOGGING
+# LOG
 # =============================
 
 def log(msg):
+    os.makedirs("logs", exist_ok=True)
     line = f"{datetime.now()} - {msg}"
     print(line)
-    with open(os.path.join(LOG_DIR, "backup.log"), "a", encoding="utf-8") as f:
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
-
-
-# =============================
-# PROTECCION DOBLE INSTANCIA
-# =============================
-
-def create_lock():
-    if os.path.exists(LOCK_FILE):
-        log("Otra instancia ya está ejecutándose. Abortando.")
-        sys.exit(1)
-    open(LOCK_FILE, "w").close()
-
-
-def remove_lock():
-    if os.path.exists(LOCK_FILE):
-        os.remove(LOCK_FILE)
 
 
 # =============================
@@ -52,45 +38,11 @@ def load_config():
 
 
 # =============================
-# VALIDACIONES
-# =============================
-
-def check_rclone():
-    if not os.path.exists("C:\\rclone\\rclone.exe"):
-        log("ERROR: rclone no encontrado en C:\\rclone")
-        sys.exit(1)
-
-
-def get_drive_fs(drive):
-    return win32api.GetVolumeInformation(drive)[4]
-
-
-def check_ntfs(drive):
-    fs = get_drive_fs(drive)
-    if fs.upper() != "NTFS":
-        log(f"ERROR: El disco está en {fs}. Debe ser NTFS.")
-        return False
-    return True
-
-
-def check_free_space(path, min_gb=5):
-    total, used, free = shutil.disk_usage(path)
-    free_gb = free // (2**30)
-    log(f"Espacio libre: {free_gb} GB")
-
-    if free_gb < min_gb:
-        log("ERROR: Espacio insuficiente.")
-        return False
-    return True
-
-
-# =============================
-# USB
+# USB DETECTION
 # =============================
 
 def find_usb_by_label(label):
     drives = win32api.GetLogicalDriveStrings().split('\000')[:-1]
-
     for drive in drives:
         try:
             volume_name = win32api.GetVolumeInformation(drive)[0]
@@ -98,122 +50,189 @@ def find_usb_by_label(label):
                 return drive
         except:
             pass
-
     return None
 
 
 # =============================
-# MODO
+# PROCESS START
 # =============================
 
-def get_rclone_mode():
-    if datetime.today().weekday() == 6:
-        return "sync"
-    return "copy"
+def start_process(cmd):
 
-
-# =============================
-# RCLONE
-# =============================
-
-def run_rclone(source, dest, cfg):
-
-    mode = get_rclone_mode()
-    log(f"Modo de ejecución: {mode.upper()}")
-
-    cmd = [
-        "C:\\rclone\\rclone.exe",
-        mode,
-        source,
-        dest,
-
-        "--fast-list",
-        "--transfers", str(cfg["transfers"]),
-        "--checkers", str(cfg["checkers"]),
-        "--modify-window", "2s",
-        "--size-only",
-        "--no-update-modtime",
-        "--no-traverse",
-
-        "--exclude-from", "exclude.txt",
-
-        "--retries", "10",
-        "--low-level-retries", "10",
-        "--timeout", "1h",
-
-        "--log-level", "INFO",
-        "--stats", "30s",
-        "--stats-one-line",
-        "--stats-one-line-date"
-    ]
-
-    if mode == "sync":
-        cmd.append("--delete-after")
-
-    process = subprocess.Popen(
+    proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1
+        bufsize=1,
+        universal_newlines=True
     )
 
-    for line in process.stdout:
-        print(line, end="")
+    q = queue.Queue()
 
-        # Detecta errores críticos en vivo
-        if "ERROR" in line.upper():
-            log("Error detectado durante transferencia")
+    def reader():
+        for line in iter(proc.stdout.readline, ''):
+            q.put(line)
+        proc.stdout.close()
 
-    process.wait()
-    return process.returncode
+    threading.Thread(target=reader, daemon=True).start()
+
+    return proc, q
 
 
 # =============================
-# MAIN
+# PARSER
+# =============================
+
+def has_activity(line):
+    return (
+        "Transferred:" in line or
+        "ETA" in line or
+        "Checks:" in line or
+        "Copied" in line
+    )
+
+
+def zero_speed(line):
+    return " 0 B/s" in line
+
+
+# =============================
+# RCLONE ENGINE V7 PRO
+# =============================
+
+def run_rclone(source, dest):
+
+    log("ENTERPRISE V7 PRO iniciado")
+
+    base_cmd = [
+        "C:\\rclone\\rclone.exe",
+        "copy",
+        source,
+        dest,
+
+        "--drive-chunk-size", "160M",
+        "--onedrive-chunk-size", "160M",
+
+        "--no-traverse",
+        "--size-only",
+        "--ignore-existing",
+
+        "--tpslimit", "2",
+        "--tpslimit-burst", "2",
+
+        "--retries", "10",
+        "--low-level-retries", "10",
+
+        "--stats", f"{STATS_INTERVAL_SEC}s",
+        "--stats-one-line",
+        "--stats-one-line-date",
+        "--progress",
+        "-v"
+    ]
+
+    large_cmd = base_cmd + [
+        "--min-size", "200M",
+        "--transfers", "1",
+        "--checkers", "1",
+        "--order-by", "size,descending"
+    ]
+
+    small_cmd = base_cmd + [
+        "--max-size", "200M",
+        "--transfers", "6",
+        "--checkers", "6",
+        "--order-by", "size,ascending"
+    ]
+
+    p_large, q_large = start_process(large_cmd)
+    log("Proceso GRANDES iniciado")
+
+    time.sleep(2)
+
+    p_small, q_small = start_process(small_cmd)
+    log("Proceso PEQUEÑOS iniciado")
+
+    last_activity = time.time()
+    zero_counter = 0
+    small_paused = False
+
+    while True:
+
+        if p_large.poll() is not None and p_small.poll() is not None:
+            break
+
+        for proc, q in [(p_large, q_large), (p_small, q_small)]:
+
+            while not q.empty():
+                line = q.get()
+                print(line, end="")
+                sys.stdout.flush()
+
+                if has_activity(line):
+                    last_activity = time.time()
+                    zero_counter = 0
+                elif zero_speed(line):
+                    zero_counter += 1
+
+        inactive = time.time() - last_activity
+
+        # ===== ANTI THROTTLING =====
+        if (
+            zero_counter >= ZERO_SPEED_LIMIT and
+            inactive > INACTIVITY_LIMIT and
+            not small_paused
+        ):
+            if p_small.poll() is None:
+                log("Throttling detectado → pausando PEQUEÑOS")
+                p_small.terminate()
+                small_paused = True
+
+        if zero_counter == 0 and small_paused:
+            log("Velocidad recuperada → reiniciando PEQUEÑOS")
+            p_small, q_small = start_process(small_cmd)
+            small_paused = False
+
+        # ===== AUTO RECOVERY =====
+        if p_large.poll() not in (None, 0):
+            log("GRANDES murió → reiniciando")
+            p_large, q_large = start_process(large_cmd)
+
+        if p_small.poll() not in (None, 0):
+            log("PEQUEÑOS murió → reiniciando")
+            p_small, q_small = start_process(small_cmd)
+
+        time.sleep(0.5)
+
+    log("Copia finalizada correctamente")
+
+
+# =============================
+# MAIN LOOP
 # =============================
 
 def main():
 
-    create_lock()
-    check_rclone()
-
     cfg = load_config()
 
-    try:
-        while True:
+    while True:
 
-            usb_path = find_usb_by_label(cfg["usb_label"])
+        usb = find_usb_by_label(cfg["usb_label"])
 
-            if not usb_path:
-                log("USB no detectado, esperando...")
-                time.sleep(cfg["check_interval"])
-                continue
-
-            log(f"USB detectado en {usb_path}")
-
-            if not check_ntfs(usb_path):
-                time.sleep(cfg["check_interval"])
-                continue
-
-            destination = os.path.join(usb_path, cfg["usb_folder"])
-            os.makedirs(destination, exist_ok=True)
-
-            if not check_free_space(destination, min_gb=5):
-                time.sleep(cfg["check_interval"])
-                continue
-
-            code = run_rclone(cfg["remote"], destination, cfg)
-
-            if code == 0:
-                log("Backup completado correctamente")
-            else:
-                log("Backup terminó con errores")
-
+        if not usb:
+            log("USB no detectado...")
             time.sleep(cfg["check_interval"])
+            continue
 
-    finally:
-        remove_lock()
+        destination = os.path.join(usb, cfg["usb_folder"])
+        os.makedirs(destination, exist_ok=True)
+
+        log(f"USB detectado en {usb}")
+
+        run_rclone(cfg["remote"], destination)
+
+        log("Ciclo completado")
+        time.sleep(cfg["check_interval"])
 
 
 if __name__ == "__main__":
