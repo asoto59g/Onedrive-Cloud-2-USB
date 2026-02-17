@@ -20,6 +20,7 @@ El objetivo principal es proporcionar un sistema de respaldo automático y resil
 ### Requerimientos del Sistema
 - **Sistema Operativo**: Windows (debido al uso de `win32api` para detección de discos).
 - **Herramienta Externa**: `rclone.exe` instalado en `C:\rclone\rclone.exe`.
+- **Hardware** SSD -> NTFS, USB Bridge-> UAS
 
 ### Dependencias de Python
 El script requiere las siguientes librerías que pueden instalarse mediante `pip`:
