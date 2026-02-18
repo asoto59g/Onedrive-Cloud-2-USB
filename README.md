@@ -1,3 +1,5 @@
+<img width="619" height="175" alt="image" src="https://github.com/user-attachments/assets/b89b39ef-17c3-43c6-9870-33487763c0ce" />
+
 # Análisis y Documentación: `1drivecloud2usb.py`
 # 🏢 SCRIPT ENTERPRISE V8 COMPLETO
 
